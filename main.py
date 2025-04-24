@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Query
 import requests
+from requests.exceptions import RequestException
 from typing import Optional
 
 app = FastAPI()
@@ -12,17 +13,21 @@ def root():
 
 @app.get("/result")
 def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = None):
-    # Fetch student info
-    student_info_res = requests.get(f"{BASE_URL}/result/studentInfo", params={"studentId": student_id})
-    if student_info_res.status_code != 200:
-        return {"error": "Student not found or API error"}
-    student_info = student_info_res.json()
+    try:
+        # Fetch student info
+        student_info_res = requests.get(f"{BASE_URL}/result/studentInfo", params={"studentId": student_id})
+        student_info_res.raise_for_status()
+        student_info = student_info_res.json()
+    except RequestException:
+        return {"error": "Unable to fetch student info. Please try again later."}
 
-    # Fetch semesters
-    semesters_res = requests.get(f"{BASE_URL}/result/semesterList")
-    if semesters_res.status_code != 200:
-        return {"error": "Failed to fetch semesters"}
-    semesters = semesters_res.json()
+    try:
+        # Fetch semesters
+        semesters_res = requests.get(f"{BASE_URL}/result/semesterList")
+        semesters_res.raise_for_status()
+        semesters = semesters_res.json()
+    except RequestException:
+        return {"error": "Unable to fetch semesters. Please try again later."}
 
     total_credits = 0
     weighted_cgpa_sum = 0
@@ -30,22 +35,28 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
 
     for semester in semesters:
         semester_id = semester['semesterId']
-        results_res = requests.get(
-            f"{BASE_URL}/result",
-            params={
-                'studentId': student_id,
-                'semesterId': semester_id,
-                'grecaptcha': ''
-            }
-        )
-        if results_res.status_code != 200:
-            continue
-        results = results_res.json()
+        try:
+            results_res = requests.get(
+                f"{BASE_URL}/result",
+                params={
+                    'studentId': student_id,
+                    'semesterId': semester_id,
+                    'grecaptcha': ''
+                }
+            )
+            results_res.raise_for_status()
+            results = results_res.json()
+        except RequestException:
+            continue  # Skip this semester if it fails
 
         course_list = []
         for course in results:
-            credits = float(course['totalCredit'])
-            cgpa = float(course['pointEquivalent'])
+            try:
+                credits = float(course['totalCredit'])
+                cgpa = float(course['pointEquivalent'])
+            except (KeyError, ValueError):
+                continue  # Skip invalid course data
+
             total_credits += credits
             weighted_cgpa_sum += cgpa * credits
 
