@@ -1,0 +1,9 @@
+<<<<<<< HEAD
+fastapi
+uvicorn
+requests
+=======
+fastapi
+uvicorn
+requests
+>>>>>>> 547d7bbfc60c828e29d588841d355efc78607d6b
