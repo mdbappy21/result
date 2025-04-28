@@ -10,7 +10,7 @@ TIMEOUT = 20  # Timeout in seconds for all requests
 
 @app.get("/")
 def root():
-    return {"message": "🎉 DIU Result API is working!"}  # Use /result?student_id=YOUR_ID
+    return {"message": "🎉 DIU Result API is working!"}  # Example: /result?student_id=YOUR_ID
 
 @app.get("/result")
 def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = None):
@@ -21,22 +21,18 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
             params={"studentId": student_id},
             timeout=TIMEOUT
         )
+        student_info_res.raise_for_status()
     except RequestException:
         return {"error": "Student info request timed out or failed"}
-
-    if student_info_res.status_code != 200:
-        return {"error": "Student not found or API error"}
 
     student_info = student_info_res.json()
 
     # Fetch semester list
     try:
         semesters_res = requests.get(f"{BASE_URL}/result/semesterList", timeout=TIMEOUT)
+        semesters_res.raise_for_status()
     except RequestException:
         return {"error": "Semester list request timed out or failed"}
-
-    if semesters_res.status_code != 200:
-        return {"error": "Failed to fetch semesters"}
 
     semesters = semesters_res.json()
 
@@ -46,8 +42,8 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
     # Filter semesters from student's starting semester onward
     semesters = [s for s in semesters if int(s["semesterId"]) >= starting_semester_id]
 
-    total_credits = 0
-    weighted_cgpa_sum = 0
+    total_credits = 0.0
+    weighted_cgpa_sum = 0.0
     semester_data = []
 
     for semester in semesters:
@@ -62,17 +58,15 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
                 },
                 timeout=TIMEOUT
             )
+            results_res.raise_for_status()
         except RequestException:
             continue  # Skip if request fails
-
-        if results_res.status_code != 200:
-            continue
 
         results = results_res.json()
         course_list = []
 
-        semester_total_credits = 0
-        semester_weighted_cgpa_sum = 0
+        semester_total_credits = 0.0
+        semester_weighted_cgpa_sum = 0.0
 
         for course in results:
             try:
@@ -88,9 +82,9 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
             semester_weighted_cgpa_sum += cgpa * credits
 
             course_list.append({
-                "title": course['courseTitle'],
-                "code": course['customCourseId'],
-                "grade": course['gradeLetter'],
+                "title": course.get('courseTitle', 'N/A'),
+                "code": course.get('customCourseId', 'N/A'),
+                "grade": course.get('gradeLetter', 'N/A'),
                 "credits": credits,
                 "cgpa": cgpa
             })
@@ -98,13 +92,14 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
         if course_list:  # If there are courses in the semester
             semester_cgpa = round(semester_weighted_cgpa_sum / semester_total_credits, 2) if semester_total_credits > 0 else None
             semester_data.append({
-                "semester": f"{semester['semesterName']} {semester['semesterYear']}",
+                "semester": f"{semester.get('semesterName', '')} {semester.get('semesterYear', '')}",
                 "semesterCGPA": semester_cgpa,
+                "semesterCredits": semester_total_credits,  # <-- Added total semester credits here
                 "courses": course_list
             })
 
     # Optional defense credits
-    if defense_cgpa:
+    if defense_cgpa is not None:
         defense_credits = 6.0  # Assuming defense/thesis = 6 credits
         total_credits += defense_credits
         weighted_cgpa_sum += defense_cgpa * defense_credits
@@ -120,8 +115,6 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
             "campus": student_info.get("campusName", "Not Provided"),
             "shift": student_info.get("shiftName", "Morning"),
             "faculty": student_info.get("facultyName", "Not Provided"),
-            "year": student_info.get("studentYear", "Not Provided"),
-            "batch": student_info.get("batchName", "Not Provided"),
             "year": f"{student_info.get('semesterName', '')} {student_info.get('semesterYear', '')}",
             "batch": student_info.get("batchNo", "Not Provided")
         },
