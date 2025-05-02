@@ -5,7 +5,7 @@ from typing import Optional
 
 app = FastAPI()
 
-BASE_URL = 'https://diurecords.vercel.app/api'
+BASE_URL = 'http://peoplepulse.diu.edu.bd:8189'
 TIMEOUT = 20  # Timeout in seconds for all requests
 
 @app.get("/")
