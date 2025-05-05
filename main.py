@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 import requests
 from requests.exceptions import RequestException
 from typing import Optional
@@ -6,11 +6,10 @@ from typing import Optional
 app = FastAPI()
 
 BASE_URL = 'http://peoplepulse.diu.edu.bd:8189'
-TIMEOUT = 20  # Timeout in seconds for all requests
 
 @app.get("/")
 def root():
-    return {"message": "🎉 DIU Result API is working!"}  # Example: /result?student_id=YOUR_ID
+    return {"message": "🎉 DIU Result API is working!"}
 
 @app.get("/result")
 def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = None):
@@ -18,28 +17,25 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
     try:
         student_info_res = requests.get(
             f"{BASE_URL}/result/studentInfo",
-            params={"studentId": student_id},
-            timeout=TIMEOUT
+            params={"studentId": student_id}
         )
         student_info_res.raise_for_status()
     except RequestException:
-        return {"error": "Student info request timed out or failed"}
+        raise HTTPException(status_code=504, detail="Failed to fetch student info")
 
     student_info = student_info_res.json()
 
     # Fetch semester list
     try:
-        semesters_res = requests.get(f"{BASE_URL}/result/semesterList", timeout=TIMEOUT)
+        semesters_res = requests.get(f"{BASE_URL}/result/semesterList")
         semesters_res.raise_for_status()
     except RequestException:
-        return {"error": "Semester list request timed out or failed"}
+        raise HTTPException(status_code=504, detail="Failed to fetch semester list")
 
     semesters = semesters_res.json()
 
     # Extract starting semesterId from student info
     starting_semester_id = int(student_info.get("semesterId", student_id.split("-")[0]))
-
-    # Filter semesters from student's starting semester onward
     semesters = [s for s in semesters if int(s["semesterId"]) >= starting_semester_id]
 
     total_credits = 0.0
@@ -55,8 +51,7 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
                     'studentId': student_id,
                     'semesterId': semester_id,
                     'grecaptcha': ''
-                },
-                timeout=TIMEOUT
+                }
             )
             results_res.raise_for_status()
         except RequestException:
@@ -77,7 +72,6 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
 
             total_credits += credits
             weighted_cgpa_sum += cgpa * credits
-
             semester_total_credits += credits
             semester_weighted_cgpa_sum += cgpa * credits
 
@@ -89,18 +83,17 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
                 "cgpa": cgpa
             })
 
-        if course_list:  # If there are courses in the semester
+        if course_list:
             semester_cgpa = round(semester_weighted_cgpa_sum / semester_total_credits, 2) if semester_total_credits > 0 else None
             semester_data.append({
                 "semester": f"{semester.get('semesterName', '')} {semester.get('semesterYear', '')}",
                 "semesterCGPA": semester_cgpa,
-                "semesterCredits": semester_total_credits,  # <-- Added total semester credits here
+                "semesterCredits": semester_total_credits,
                 "courses": course_list
             })
 
-    # Optional defense credits
     if defense_cgpa is not None:
-        defense_credits = 6.0  # Assuming defense/thesis = 6 credits
+        defense_credits = 6.0
         total_credits += defense_credits
         weighted_cgpa_sum += defense_cgpa * defense_credits
 
