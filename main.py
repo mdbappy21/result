@@ -39,6 +39,7 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
     semesters = [s for s in semesters if int(s["semesterId"]) >= starting_semester_id]
 
     total_credits = 0.0
+    passed_credits = 0.0
     weighted_cgpa_sum = 0.0
     semester_data = []
 
@@ -66,25 +67,42 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
         for course in results:
             try:
                 credits = float(course['totalCredit'])
-                cgpa = float(course['pointEquivalent'])
+                cgpa = float(course['pointEquivalent']) if course['pointEquivalent'] is not None else None
+                grade = course.get('gradeLetter', 'N/A')
             except (ValueError, KeyError):
                 continue
 
-            total_credits += credits
-            weighted_cgpa_sum += cgpa * credits
+            total_credits += credits  # Total credits attempted
             semester_total_credits += credits
-            semester_weighted_cgpa_sum += cgpa * credits
 
+            if cgpa is not None:
+                weighted_cgpa_sum += cgpa * credits
+                semester_weighted_cgpa_sum += cgpa * credits
+
+            # Fail criteria
+            is_fail = (
+                grade == 'F' or 
+                grade == 'Teaching evaluation is pending' or 
+                cgpa is None
+            )
+
+            # Count passed credits for final CGPA calculation
+            if not is_fail:
+                passed_credits += credits
+
+            # Add course details
             course_list.append({
                 "title": course.get('courseTitle', 'N/A'),
                 "code": course.get('customCourseId', 'N/A'),
-                "grade": course.get('gradeLetter', 'N/A'),
+                "grade": grade,
                 "credits": credits,
                 "cgpa": cgpa
             })
 
+        # Semester CGPA calculation
+        semester_cgpa = round(semester_weighted_cgpa_sum / semester_total_credits, 2) if semester_total_credits > 0 else None
+
         if course_list:
-            semester_cgpa = round(semester_weighted_cgpa_sum / semester_total_credits, 2) if semester_total_credits > 0 else None
             semester_data.append({
                 "semester": f"{semester.get('semesterName', '')} {semester.get('semesterYear', '')}",
                 "semesterCGPA": semester_cgpa,
@@ -92,12 +110,14 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
                 "courses": course_list
             })
 
+    # Include defense CGPA if provided
     if defense_cgpa is not None:
         defense_credits = 6.0
-        total_credits += defense_credits
+        passed_credits += defense_credits
         weighted_cgpa_sum += defense_cgpa * defense_credits
 
-    final_cgpa = round(weighted_cgpa_sum / total_credits, 2) if total_credits > 0 else None
+    # Final CGPA based on passed credits only
+    final_cgpa = round(weighted_cgpa_sum / passed_credits, 2) if passed_credits > 0 else None
 
     return {
         "student": {
@@ -112,7 +132,7 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
             "batch": student_info.get("batchNo", "Not Provided")
         },
         "semesters": semester_data,
-        "totalCredits": total_credits,
+        "totalCredits": passed_credits,  # Only passed credits shown here
         "finalCGPA": final_cgpa,
         "defenseIncluded": defense_cgpa is not None
     }
