@@ -42,6 +42,7 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
     passed_credits = 0.0
     weighted_cgpa_sum = 0.0
     semester_data = []
+    has_pending_teaching_evaluation = False
 
     for semester in semesters:
         semester_id = semester['semesterId']
@@ -56,7 +57,7 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
             )
             results_res.raise_for_status()
         except RequestException:
-            continue  # Skip if request fails
+            continue
 
         results = results_res.json()
         course_list = []
@@ -72,25 +73,21 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
             except (ValueError, KeyError):
                 continue
 
-            total_credits += credits  # Total credits attempted
+            total_credits += credits
             semester_total_credits += credits
 
             if cgpa is not None:
                 weighted_cgpa_sum += cgpa * credits
                 semester_weighted_cgpa_sum += cgpa * credits
 
-            # Fail criteria
-            is_fail = (
-                grade == 'F' or 
-                grade == 'Teaching evaluation is pending' or 
-                cgpa is None
-            )
+            is_fail = (grade == 'F')
 
-            # Count passed credits for final CGPA calculation
+            if grade == 'Teaching evaluation is pending':
+                has_pending_teaching_evaluation = True
+
             if not is_fail:
                 passed_credits += credits
 
-            # Add course details
             course_list.append({
                 "title": course.get('courseTitle', 'N/A'),
                 "code": course.get('customCourseId', 'N/A'),
@@ -99,7 +96,6 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
                 "cgpa": cgpa
             })
 
-        # Semester CGPA calculation
         semester_cgpa = round(semester_weighted_cgpa_sum / semester_total_credits, 2) if semester_total_credits > 0 else None
 
         if course_list:
@@ -110,14 +106,51 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
                 "courses": course_list
             })
 
-    # Include defense CGPA if provided
     if defense_cgpa is not None:
         defense_credits = 6.0
         passed_credits += defense_credits
         weighted_cgpa_sum += defense_cgpa * defense_credits
 
-    # Final CGPA based on passed credits only
     final_cgpa = round(weighted_cgpa_sum / passed_credits, 2) if passed_credits > 0 else None
+
+    course_status = {}
+    low_cgpa_status = {}
+    improved_courses = set()
+
+    for semester in semester_data:
+        for course in semester["courses"]:
+            code = course["code"]
+            cgpa = course["cgpa"]
+            grade = course["grade"]
+
+            is_fail = (grade == 'F')
+            is_low_cgpa = cgpa is not None and cgpa <= 2.5
+
+            if is_fail:
+                course_status[code] = {
+                    "title": course["title"],
+                    "code": code,
+                    "grade": grade,
+                    "credits": course["credits"]
+                }
+            else:
+                improved_courses.add(code)
+
+            if is_low_cgpa:
+                low_cgpa_status[code] = {
+                    "title": course["title"],
+                    "code": code,
+                    "grade": grade,
+                    "credits": course["credits"],
+                    "cgpa": cgpa
+                }
+
+    failed_courses = list(course_status.values())
+
+    low_cgpa_courses = [
+        course for code, course in low_cgpa_status.items()
+        if code not in course_status or code not in improved_courses
+    ]
 
     return {
         "student": {
@@ -132,7 +165,10 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
             "batch": student_info.get("batchNo", "Not Provided")
         },
         "semesters": semester_data,
-        "totalCredits": passed_credits,  # Only passed credits shown here
+        "totalCredits": passed_credits,
         "finalCGPA": final_cgpa,
-        "defenseIncluded": defense_cgpa is not None
+        "defenseIncluded": defense_cgpa is not None,
+        "failedCourses": failed_courses,
+        "lowCgpaCourses": low_cgpa_courses,
+        "hasPendingTeachingEvaluation": has_pending_teaching_evaluation
     }
