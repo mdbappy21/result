@@ -80,12 +80,10 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
                 weighted_cgpa_sum += cgpa * credits
                 semester_weighted_cgpa_sum += cgpa * credits
 
-            is_fail = (grade == 'F')
-
             if grade == 'Teaching evaluation is pending':
                 has_pending_teaching_evaluation = True
 
-            if not is_fail:
+            if grade != 'F':
                 passed_credits += credits
 
             course_list.append({
@@ -152,6 +150,50 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
         if code not in course_status or code not in improved_courses
     ]
 
+    passed_course_status = {}
+
+    for semester in semester_data:
+        for course in semester["courses"]:
+            code = course["code"]
+            grade = course["grade"]
+            cgpa = course["cgpa"]
+
+            if grade == 'F':
+                continue  # skip failed
+
+            if code not in passed_course_status:
+                passed_course_status[code] = {
+                    "title": course["title"],
+                    "code": code,
+                    "grade": grade,
+                    "credits": course["credits"],
+                    "cgpa": cgpa
+                }
+            else:
+                existing_course = passed_course_status[code]
+                if cgpa is not None:
+                    # Compare CGPA and replace with higher one
+                    if cgpa > existing_course["cgpa"]:
+                        passed_course_status[code] = {
+                            "title": course["title"],
+                            "code": code,
+                            "grade": grade,
+                            "credits": course["credits"],
+                            "cgpa": cgpa
+                        }
+                    elif cgpa == existing_course["cgpa"]:
+                        # If CGPAs are equal, keep the latest (newest semester)
+                        if existing_course["semesterId"] < course["semesterId"]:
+                            passed_course_status[code] = {
+                                "title": course["title"],
+                                "code": code,
+                                "grade": grade,
+                                "credits": course["credits"],
+                                "cgpa": cgpa,
+                                "semesterId": course["semesterId"]
+                            }
+    passed_courses = list(passed_course_status.values())
+
     return {
         "student": {
             "id": student_info.get("studentId", "Not Provided"),
@@ -170,5 +212,6 @@ def get_result(student_id: str = Query(...), defense_cgpa: Optional[float] = Non
         "defenseIncluded": defense_cgpa is not None,
         "failedCourses": failed_courses,
         "lowCgpaCourses": low_cgpa_courses,
+        "passedCourses": passed_courses,
         "hasPendingTeachingEvaluation": has_pending_teaching_evaluation
     }
